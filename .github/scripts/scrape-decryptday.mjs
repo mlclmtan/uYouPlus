@@ -55,32 +55,14 @@ async function login(page) {
   await clearCloudflare(page, "login page");
   await page.waitForLoadState("networkidle", { timeout: 30_000 }).catch(() => {});
 
-  // Find email/password inputs defensively — try multiple common selectors.
-  const emailSelectors = [
-    'input[type="email"]',
-    'input[name="email"]',
-    'input[autocomplete="username"]',
-    'input[autocomplete="email"]',
-    'input[id*="email" i]',
-    'input[name*="email" i]',
-    'input[placeholder*="email" i]',
-  ];
+  // Find password first — it's reliably `input[type="password"]` everywhere.
   const passwordSelectors = [
     'input[type="password"]',
     'input[name="password"]',
     'input[autocomplete="current-password"]',
     'input[id*="password" i]',
   ];
-
-  let emailField, passwordField;
-  for (const sel of emailSelectors) {
-    const handle = await page.$(sel);
-    if (handle) {
-      emailField = handle;
-      log(`  email field: ${sel}`);
-      break;
-    }
-  }
+  let passwordField;
   for (const sel of passwordSelectors) {
     const handle = await page.$(sel);
     if (handle) {
@@ -90,8 +72,61 @@ async function login(page) {
     }
   }
 
+  // Email/username field: try common selectors, then fall back to "the input
+  // immediately before the password field in DOM order" — works across most
+  // login forms regardless of field naming.
+  const emailSelectors = [
+    'input[type="email"]',
+    'input[name="email"]',
+    'input[name="username"]',
+    'input[name="login"]',
+    'input[name="user"]',
+    'input[autocomplete="username"]',
+    'input[autocomplete="email"]',
+    'input[id*="email" i]',
+    'input[id*="user" i]',
+    'input[id*="login" i]',
+    'input[name*="email" i]',
+    'input[name*="user" i]',
+    'input[placeholder*="email" i]',
+    'input[placeholder*="user" i]',
+  ];
+  let emailField, emailSel;
+  for (const sel of emailSelectors) {
+    const handle = await page.$(sel);
+    if (handle) {
+      emailField = handle;
+      emailSel = sel;
+      break;
+    }
+  }
+  if (emailField) {
+    log(`  email field: ${emailSel}`);
+  } else if (passwordField) {
+    log("  email field not matched by selectors; falling back to 'input before password'");
+    const fallbackSel = await page.evaluate(() => {
+      const inputs = [...document.querySelectorAll("input")];
+      const pwd = inputs.find((i) => i.type === "password");
+      if (!pwd) return null;
+      const pwdIdx = inputs.indexOf(pwd);
+      for (let i = pwdIdx - 1; i >= 0; i--) {
+        const t = inputs[i].type;
+        if (!t || ["text", "email", "tel", "url"].includes(t)) {
+          if (inputs[i].name) return `input[name="${inputs[i].name}"]`;
+          if (inputs[i].id) return `#${CSS.escape(inputs[i].id)}`;
+          return `input:nth-of-type(${i + 1})`;
+        }
+      }
+      return null;
+    });
+    if (fallbackSel) {
+      emailField = await page.$(fallbackSel);
+      if (emailField) log(`  email field (positional fallback): ${fallbackSel}`);
+    }
+  }
+
   if (!emailField || !passwordField) {
-    log("FATAL: could not locate email/password fields on login page");
+    log(`FATAL: could not locate ${!emailField ? "email" : ""}${!emailField && !passwordField ? "+" : ""}${!passwordField ? "password" : ""} field on login page`);
     await snapshot(page, "login-page-no-fields");
     process.exit(3);
   }

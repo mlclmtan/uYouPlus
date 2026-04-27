@@ -152,7 +152,9 @@ jobs:
         uses: actions/upload-artifact@v4.4.3
         with:
           name: scraper-diagnostics
-          path: ${{ runner.temp }}/scraper/*.{png,html}
+          path: |
+            ${{ runner.temp }}/scraper/*.png
+            ${{ runner.temp }}/scraper/*.html
           if-no-files-found: ignore
           retention-days: 7
 
