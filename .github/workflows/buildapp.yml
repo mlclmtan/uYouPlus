@@ -125,11 +125,17 @@ jobs:
         env:
           USER_URL: ${{ inputs.decrypted_youtube_url }}
           REPO_DIR: ${{ github.workspace }}/main
+          DECRYPTDAY_EMAIL: ${{ secrets.DECRYPTDAY_EMAIL }}
+          DECRYPTDAY_PASSWORD: ${{ secrets.DECRYPTDAY_PASSWORD }}
         run: |
           if [ -n "$USER_URL" ]; then
             echo "Using user-provided URL"
             echo "url=$USER_URL" >> "$GITHUB_OUTPUT"
             exit 0
+          fi
+          if [ -z "$DECRYPTDAY_EMAIL" ] || [ -z "$DECRYPTDAY_PASSWORD" ]; then
+            echo "::error::DECRYPTDAY_EMAIL and DECRYPTDAY_PASSWORD secrets are not set in this repo. Set them with 'gh secret set DECRYPTDAY_EMAIL --repo ${{ github.repository }}' (and same for PASSWORD), then re-run."
+            exit 1
           fi
           echo "No URL provided; scraping decrypt.day with Playwright..."
           SCRAPER_DIR="$RUNNER_TEMP/scraper"
@@ -140,6 +146,15 @@ jobs:
           npm install --no-save --no-audit --no-fund playwright@1.59.1
           npx playwright install chromium
           node scrape-decryptday.mjs >> "$GITHUB_OUTPUT"
+
+      - name: Upload scraper diagnostics on failure
+        if: failure() && steps.resolve_url.conclusion == 'failure'
+        uses: actions/upload-artifact@v4.4.3
+        with:
+          name: scraper-diagnostics
+          path: ${{ runner.temp }}/scraper/*.{png,html}
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Prepare YouTube iPA
         id: prepare_youtube
