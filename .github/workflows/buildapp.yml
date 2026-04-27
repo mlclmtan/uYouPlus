@@ -17,9 +17,9 @@ on:
         required: false
         type: string
       decrypted_youtube_url:
-        description: "Direct URL to the decrypted YouTube ipa. The version of YouTube will be detected automatically."
+        description: "Direct URL to the decrypted YouTube ipa. Leave blank to auto-scrape decrypt.day for the latest version."
         default: ""
-        required: true
+        required: false
         type: string
       bundle_id:
         description: "Modify the bundle ID. Not recommended"
@@ -31,9 +31,14 @@ on:
         default: "YouTube"
         required: true
         type: string
-      create_release:
-        description: "Create a draft release"
+      publish:
+        description: "Auto-publish the release (uncheck to keep as draft)"
         default: true
+        required: false
+        type: boolean
+      force:
+        description: "Rebuild even if a release already exists for this YouTube + uYou version pair"
+        default: false
         required: false
         type: boolean
       upload_artifact:
@@ -115,6 +120,27 @@ jobs:
         env:
           THEOS: ${{ github.workspace }}/theos
 
+      - name: Resolve YouTube IPA URL
+        id: resolve_url
+        env:
+          USER_URL: ${{ inputs.decrypted_youtube_url }}
+          REPO_DIR: ${{ github.workspace }}/main
+        run: |
+          if [ -n "$USER_URL" ]; then
+            echo "Using user-provided URL"
+            echo "url=$USER_URL" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "No URL provided; scraping decrypt.day with Playwright..."
+          SCRAPER_DIR="$RUNNER_TEMP/scraper"
+          mkdir -p "$SCRAPER_DIR"
+          cp "$REPO_DIR/.github/scripts/scrape-decryptday.mjs" "$SCRAPER_DIR/"
+          cd "$SCRAPER_DIR"
+          npm init -y >/dev/null
+          npm install --no-save --no-audit --no-fund playwright@1.59.1
+          npx playwright install chromium
+          node scrape-decryptday.mjs >> "$GITHUB_OUTPUT"
+
       - name: Prepare YouTube iPA
         id: prepare_youtube
         run: |
@@ -129,10 +155,30 @@ jobs:
 
         env:
           THEOS: ${{ github.workspace }}/theos
-          YOUTUBE_URL: ${{ inputs.decrypted_youtube_url }}
+          YOUTUBE_URL: ${{ steps.resolve_url.outputs.url }}
+
+      - name: Check if already released
+        id: dedup
+        if: ${{ !inputs.force }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          YOUTUBE_VERSION: ${{ steps.prepare_youtube.outputs.youtube_version }}
+          UYOU_VERSION: ${{ inputs.uyou_version }}
+        run: |
+          tag_prefix="v${YOUTUBE_VERSION}-${UYOU_VERSION}-"
+          existing=$(gh release list --limit 50 --json tagName --jq ".[] | select(.tagName | startswith(\"${tag_prefix}\")) | .tagName" | head -n1)
+          if [ -n "$existing" ]; then
+            echo "::notice::Already released as ${existing}; skipping build. Re-run with force=true to rebuild."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No existing release for ${tag_prefix}*; proceeding."
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Fix compiling & Build Package
         id: build_package
+        if: steps.dedup.outputs.skip != 'true'
         run: |
           mkdir -p theos/lib/iphone/rootless
           cd ${{ github.workspace }}/main
@@ -151,7 +197,7 @@ jobs:
           APP_NAME: ${{ inputs.app_name }}
 
       - name: Upload Artifact
-        if: ${{ inputs.upload_artifact }}
+        if: ${{ inputs.upload_artifact && steps.dedup.outputs.skip != 'true' }}
         uses: actions/upload-artifact@v4.4.3
         env:
           UYOU_VERSION: ${{ inputs.uyou_version }}
@@ -163,12 +209,13 @@ jobs:
 
       - name: Create Release
         id: create_release
+        if: steps.dedup.outputs.skip != 'true'
         uses: qnblackcat/action-gh-release@master
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           UYOU_VERSION: ${{ inputs.uyou_version }}
           YOUTUBE_VERSION: ${{ steps.prepare_youtube.outputs.youtube_version }}
-          DRAFT: ${{ inputs.create_release }}
+          DRAFT: ${{ !inputs.publish }}
         with:
           tag_name: v${{ env.YOUTUBE_VERSION }}-${{ env.UYOU_VERSION }}-(${{ github.run_number }})
           name: v${{ env.YOUTUBE_VERSION }}-${{ env.UYOU_VERSION }}-(${{ github.run_number }})
