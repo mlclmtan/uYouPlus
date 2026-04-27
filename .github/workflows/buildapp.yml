@@ -17,9 +17,9 @@ on:
         required: false
         type: string
       decrypted_youtube_url:
-        description: "Direct URL to the decrypted YouTube ipa. Leave blank to auto-scrape decrypt.day for the latest version."
+        description: "Direct URL to the decrypted YouTube ipa (e.g. paste from decrypt.day after logging in). YouTube version is detected automatically."
         default: ""
-        required: false
+        required: true
         type: string
       bundle_id:
         description: "Modify the bundle ID. Not recommended"
@@ -120,44 +120,6 @@ jobs:
         env:
           THEOS: ${{ github.workspace }}/theos
 
-      - name: Resolve YouTube IPA URL
-        id: resolve_url
-        env:
-          USER_URL: ${{ inputs.decrypted_youtube_url }}
-          REPO_DIR: ${{ github.workspace }}/main
-          DECRYPTDAY_EMAIL: ${{ secrets.DECRYPTDAY_EMAIL }}
-          DECRYPTDAY_PASSWORD: ${{ secrets.DECRYPTDAY_PASSWORD }}
-        run: |
-          if [ -n "$USER_URL" ]; then
-            echo "Using user-provided URL"
-            echo "url=$USER_URL" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if [ -z "$DECRYPTDAY_EMAIL" ] || [ -z "$DECRYPTDAY_PASSWORD" ]; then
-            echo "::error::DECRYPTDAY_EMAIL and DECRYPTDAY_PASSWORD secrets are not set in this repo. Set them with 'gh secret set DECRYPTDAY_EMAIL --repo ${{ github.repository }}' (and same for PASSWORD), then re-run."
-            exit 1
-          fi
-          echo "No URL provided; scraping decrypt.day with Playwright..."
-          SCRAPER_DIR="$RUNNER_TEMP/scraper"
-          mkdir -p "$SCRAPER_DIR"
-          cp "$REPO_DIR/.github/scripts/scrape-decryptday.mjs" "$SCRAPER_DIR/"
-          cd "$SCRAPER_DIR"
-          npm init -y >/dev/null
-          npm install --no-save --no-audit --no-fund playwright@1.59.1
-          npx playwright install chromium
-          node scrape-decryptday.mjs >> "$GITHUB_OUTPUT"
-
-      - name: Upload scraper diagnostics on failure
-        if: failure() && steps.resolve_url.conclusion == 'failure'
-        uses: actions/upload-artifact@v4.4.3
-        with:
-          name: scraper-diagnostics
-          path: |
-            ${{ runner.temp }}/scraper/*.png
-            ${{ runner.temp }}/scraper/*.html
-          if-no-files-found: ignore
-          retention-days: 7
-
       - name: Prepare YouTube iPA
         id: prepare_youtube
         run: |
@@ -172,7 +134,7 @@ jobs:
 
         env:
           THEOS: ${{ github.workspace }}/theos
-          YOUTUBE_URL: ${{ steps.resolve_url.outputs.url }}
+          YOUTUBE_URL: ${{ inputs.decrypted_youtube_url }}
 
       - name: Check if already released
         id: dedup
