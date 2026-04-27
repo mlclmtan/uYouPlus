@@ -1,0 +1,14 @@
+{
+  "name": "uyouplus-local-release",
+  "version": "1.0.0",
+  "description": "Local helper that grabs the decrypted YouTube IPA via your logged-in browser, stages it on a hidden GitHub pre-release, and triggers the build+publish workflow.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "release": "node local-release.mjs",
+    "postinstall": "playwright install chromium"
+  },
+  "dependencies": {
+    "playwright": "1.59.1"
+  }
+}
